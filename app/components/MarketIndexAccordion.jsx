@@ -207,6 +207,7 @@ export default function MarketIndexAccordion({
   const [settingOpen, setSettingOpen] = useState(false);
   const [tickerIndex, setTickerIndex] = useState(0);
   const rootRef = useRef(null);
+  const hasInitializedSelectedCodes = useRef(false);
 
   useEffect(() => {
     const el = rootRef.current;
@@ -257,6 +258,7 @@ export default function MarketIndexAccordion({
   // 初始化选中指数（本地偏好 > 默认集合）
   useEffect(() => {
     if (!indices.length || typeof window === 'undefined') return;
+    if (hasInitializedSelectedCodes.current) return;
     try {
       const stored = window.localStorage.getItem('marketIndexSelected');
       const availableCodes = new Set(indices.map((it) => it.code));
@@ -266,6 +268,7 @@ export default function MarketIndexAccordion({
           const filtered = parsed.filter((c) => availableCodes.has(c));
           if (filtered.length) {
             setSelectedCodes(filtered);
+            hasInitializedSelectedCodes.current = true;
             return;
           }
         }

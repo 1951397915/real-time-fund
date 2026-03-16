@@ -1624,7 +1624,9 @@ export default function HomePage() {
         if (key === 'funds') {
           const prevSig = getFundCodesSignature(prevValue);
           const nextSig = getFundCodesSignature(nextValue);
-          if (prevSig === nextSig) return;
+          if (prevSig === nextSig) {
+            return;
+          }
         }
         if (!skipSyncRef.current) {
           const now = nowInTz().toISOString();
