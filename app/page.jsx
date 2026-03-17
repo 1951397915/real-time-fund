@@ -59,8 +59,11 @@ import UpdatePromptModal from "./components/UpdatePromptModal";
 import RefreshButton from "./components/RefreshButton";
 import WeChatModal from "./components/WeChatModal";
 import DcaModal from "./components/DcaModal";
+import MarketIndexAccordion from "./components/MarketIndexAccordion";
+import SortSettingModal from "./components/SortSettingModal";
 import githubImg from "./assets/github.svg";
 import { supabase, isSupabaseConfigured } from './lib/supabase';
+import { toast as sonnerToast } from 'sonner';
 import { recordValuation, getAllValuationSeries, clearFund } from './lib/valuationTimeseries';
 import { loadHolidaysForYears, isTradingDay as isDateTradingDay } from './lib/tradingCalendar';
 import { parseFundTextWithLLM, fetchFundData, fetchLatestRelease, fetchShanghaiIndexDate, fetchSmartFundNetValue, searchFunds } from './api/fund';
@@ -160,10 +163,22 @@ export default function HomePage() {
   const [groupManageOpen, setGroupManageOpen] = useState(false);
   const [addFundToGroupOpen, setAddFundToGroupOpen] = useState(false);
 
+  const DEFAULT_SORT_RULES = [
+    { id: 'default', label: '默认', enabled: true },
+    // 估值涨幅为原始名称，“涨跌幅”为别名
+    { id: 'yield', label: '估值涨幅', alias: '涨跌幅', enabled: true },
+    // 持仓金额排序：默认隐藏
+    { id: 'holdingAmount', label: '持仓金额', enabled: false },
+    { id: 'holding', label: '持有收益', enabled: true },
+    { id: 'name', label: '基金名称', alias: '名称', enabled: true },
+  ];
+
   // 排序状态
-  const [sortBy, setSortBy] = useState('default'); // default, name, yield, holding
+  const [sortBy, setSortBy] = useState('default'); // default, name, yield, holding, holdingAmount
   const [sortOrder, setSortOrder] = useState('desc'); // asc | desc
   const [isSortLoaded, setIsSortLoaded] = useState(false);
+  const [sortRules, setSortRules] = useState(DEFAULT_SORT_RULES);
+  const [sortSettingOpen, setSortSettingOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -171,6 +186,46 @@ export default function HomePage() {
       const savedSortOrder = window.localStorage.getItem('localSortOrder');
       if (savedSortBy) setSortBy(savedSortBy);
       if (savedSortOrder) setSortOrder(savedSortOrder);
+
+      // 1）优先从 customSettings.localSortRules 读取
+      // 2）兼容旧版独立 localSortRules 字段
+      let rulesFromSettings = null;
+      try {
+        const rawSettings = window.localStorage.getItem('customSettings');
+        if (rawSettings) {
+          const parsed = JSON.parse(rawSettings);
+          if (parsed && Array.isArray(parsed.localSortRules)) {
+            rulesFromSettings = parsed.localSortRules;
+          }
+        }
+      } catch {
+        // ignore
+      }
+
+      if (!rulesFromSettings) {
+        const legacy = window.localStorage.getItem('localSortRules');
+        if (legacy) {
+          try {
+            const parsed = JSON.parse(legacy);
+            if (Array.isArray(parsed)) {
+              rulesFromSettings = parsed;
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      if (rulesFromSettings && rulesFromSettings.length) {
+        const merged = DEFAULT_SORT_RULES.map((rule) => {
+          const found = rulesFromSettings.find((r) => r.id === rule.id);
+          return found
+            ? { ...rule, enabled: found.enabled !== false }
+            : rule;
+        });
+        setSortRules(merged);
+      }
+
       setIsSortLoaded(true);
     }
   }, []);
@@ -179,11 +234,41 @@ export default function HomePage() {
     if (typeof window !== 'undefined' && isSortLoaded) {
       window.localStorage.setItem('localSortBy', sortBy);
       window.localStorage.setItem('localSortOrder', sortOrder);
+      try {
+        const raw = window.localStorage.getItem('customSettings');
+        const parsed = raw ? JSON.parse(raw) : {};
+        const next = {
+          ...(parsed && typeof parsed === 'object' ? parsed : {}),
+          localSortRules: sortRules,
+        };
+        window.localStorage.setItem('customSettings', JSON.stringify(next));
+        // 更新后标记 customSettings 脏并触发云端同步
+        triggerCustomSettingsSync();
+      } catch {
+        // ignore
+      }
     }
-  }, [sortBy, sortOrder, isSortLoaded]);
+  }, [sortBy, sortOrder, sortRules, isSortLoaded]);
+
+  // 当用户关闭某个排序规则时，如果当前 sortBy 不再可用，则自动切换到第一个启用的规则
+  useEffect(() => {
+    const enabledRules = (sortRules || []).filter((r) => r.enabled);
+    const enabledIds = enabledRules.map((r) => r.id);
+    if (!enabledIds.length) {
+      // 至少保证默认存在
+      setSortRules(DEFAULT_SORT_RULES);
+      setSortBy('default');
+      return;
+    }
+    if (!enabledIds.includes(sortBy)) {
+      setSortBy(enabledIds[0]);
+    }
+  }, [sortRules, sortBy]);
 
   // 视图模式
   const [viewMode, setViewMode] = useState('card'); // card, list
+  // 全局隐藏金额状态（影响分组汇总、列表和卡片）
+  const [maskAmounts, setMaskAmounts] = useState(false);
 
   // 用户认证状态
   const [user, setUser] = useState(null);
@@ -240,6 +325,7 @@ export default function HomePage() {
   const containerRef = useRef(null);
   const [navbarHeight, setNavbarHeight] = useState(0);
   const [filterBarHeight, setFilterBarHeight] = useState(0);
+  const [marketIndexAccordionHeight, setMarketIndexAccordionHeight] = useState(0);
   // 主题初始固定为 dark，避免 SSR 与客户端首屏不一致导致 hydration 报错；真实偏好由 useLayoutEffect 在首帧前恢复
   const [theme, setTheme] = useState('dark');
   const [showThemeTransition, setShowThemeTransition] = useState(false);
@@ -538,9 +624,42 @@ export default function HomePage() {
 
       return filtered.sort((a, b) => {
         if (sortBy === 'yield') {
-          const valA = isNumber(a.estGszzl) ? a.estGszzl : (a.gszzl ?? a.zzl ?? 0);
-          const valB = isNumber(b.estGszzl) ? b.estGszzl : (b.gszzl ?? a.zzl ?? 0);
+          const getYieldValue = (fund) => {
+            // 与 estimateChangePercent 展示逻辑对齐：
+            // - noValuation 为 true 一律视为无“估值涨幅”
+            // - 有估值覆盖时用 estGszzl
+            // - 否则仅在 gszzl 为数字时使用 gszzl
+            if (fund.noValuation) {
+              return { value: 0, hasValue: false };
+            }
+            if (fund.estPricedCoverage > 0.05) {
+              if (isNumber(fund.estGszzl)) {
+                return { value: fund.estGszzl, hasValue: true };
+              }
+              return { value: 0, hasValue: false };
+            }
+            if (isNumber(fund.gszzl)) {
+              return { value: Number(fund.gszzl), hasValue: true };
+            }
+            return { value: 0, hasValue: false };
+          };
+
+          const { value: valA, hasValue: hasA } = getYieldValue(a);
+          const { value: valB, hasValue: hasB } = getYieldValue(b);
+
+          // 无“估值涨幅”展示值（界面为 `—`）的基金统一排在最后
+          if (!hasA && !hasB) return 0;
+          if (!hasA) return 1;
+          if (!hasB) return -1;
+
           return sortOrder === 'asc' ? valA - valB : valB - valA;
+        }
+        if (sortBy === 'holdingAmount') {
+          const pa = getHoldingProfit(a, holdings[a.code]);
+          const pb = getHoldingProfit(b, holdings[b.code]);
+          const amountA = pa?.amount ?? Number.NEGATIVE_INFINITY;
+          const amountB = pb?.amount ?? Number.NEGATIVE_INFINITY;
+          return sortOrder === 'asc' ? amountA - amountB : amountB - amountA;
         }
         if (sortBy === 'holding') {
           const pa = getHoldingProfit(a, holdings[a.code]);
@@ -659,7 +778,9 @@ export default function HomePage() {
           isUpdated: f.jzrq === todayStr,
           hasDca: dcaPlans[f.code]?.enabled === true,
           latestNav,
+          latestNavDate: yesterdayDate,
           estimateNav,
+          estimateNavDate: estimateTime,
           yesterdayChangePercent,
           yesterdayChangeValue,
           yesterdayDate,
@@ -1276,7 +1397,7 @@ export default function HomePage() {
     });
   };
 
-  const confirmScanImport = async (targetGroupId = 'all') => {
+  const confirmScanImport = async (targetGroupId = 'all', expandAfterAdd = true) => {
     const codes = Array.from(selectedScannedCodes);
     if (codes.length === 0) {
       showToast('请至少选择一个基金代码', 'error');
@@ -1332,6 +1453,8 @@ export default function HomePage() {
       }
 
       if (newFunds.length > 0) {
+        const newCodesSet = new Set(newFunds.map((f) => f.code));
+
         setFunds(prev => {
           const updated = dedupeByCode([...newFunds, ...prev]);
           storageHelper.setItem('funds', JSON.stringify(updated));
@@ -1353,6 +1476,22 @@ export default function HomePage() {
           }
         });
         if (Object.keys(nextSeries).length > 0) setValuationSeries(prev => ({ ...prev, ...nextSeries }));
+
+        if (!expandAfterAdd) {
+          // 用户关闭“添加后展开详情”：将新添加基金的卡片和业绩走势都标记为收起
+          setCollapsedCodes(prev => {
+            const next = new Set(prev);
+            newCodesSet.forEach((code) => next.add(code));
+            storageHelper.setItem('collapsedCodes', JSON.stringify(Array.from(next)));
+            return next;
+          });
+          setCollapsedTrends(prev => {
+            const next = new Set(prev);
+            newCodesSet.forEach((code) => next.add(code));
+            storageHelper.setItem('collapsedTrends', JSON.stringify(Array.from(next)));
+            return next;
+          });
+        }
 
         if (targetGroupId === 'fav') {
           setFavorites(prev => {
@@ -1427,7 +1566,6 @@ export default function HomePage() {
       const fields = Array.from(new Set([
         'jzrq',
         'dwjz',
-        'gsz',
         ...(Array.isArray(extraFields) ? extraFields : [])
       ]));
       const items = list.map((item) => {
@@ -2078,29 +2216,30 @@ export default function HomePage() {
     return () => subscription.unsubscribe();
   }, []);
 
-  useEffect(() => {
-    if (!isSupabaseConfigured || !user?.id) return;
-    const channel = supabase
-      .channel(`user-configs-${user.id}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'user_configs', filter: `user_id=eq.${user.id}` }, async (payload) => {
-        const incoming = payload?.new?.data;
-        if (!isPlainObject(incoming)) return;
-        const incomingComparable = getComparablePayload(incoming);
-        if (!incomingComparable || incomingComparable === lastSyncedRef.current) return;
-        await applyCloudConfig(incoming, payload.new.updated_at);
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'user_configs', filter: `user_id=eq.${user.id}` }, async (payload) => {
-        const incoming = payload?.new?.data;
-        if (!isPlainObject(incoming)) return;
-        const incomingComparable = getComparablePayload(incoming);
-        if (!incomingComparable || incomingComparable === lastSyncedRef.current) return;
-        await applyCloudConfig(incoming, payload.new.updated_at);
-      })
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user?.id]);
+  // 实时同步
+  // useEffect(() => {
+  //   if (!isSupabaseConfigured || !user?.id) return;
+  //   const channel = supabase
+  //     .channel(`user-configs-${user.id}`)
+  //     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'user_configs', filter: `user_id=eq.${user.id}` }, async (payload) => {
+  //       const incoming = payload?.new?.data;
+  //       if (!isPlainObject(incoming)) return;
+  //       const incomingComparable = getComparablePayload(incoming);
+  //       if (!incomingComparable || incomingComparable === lastSyncedRef.current) return;
+  //       await applyCloudConfig(incoming, payload.new.updated_at);
+  //     })
+  //     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'user_configs', filter: `user_id=eq.${user.id}` }, async (payload) => {
+  //       const incoming = payload?.new?.data;
+  //       if (!isPlainObject(incoming)) return;
+  //       const incomingComparable = getComparablePayload(incoming);
+  //       if (!incomingComparable || incomingComparable === lastSyncedRef.current) return;
+  //       await applyCloudConfig(incoming, payload.new.updated_at);
+  //     })
+  //     .subscribe();
+  //   return () => {
+  //     supabase.removeChannel(channel);
+  //   };
+  // }, [user?.id]);
 
   const handleSendOtp = async (e) => {
     e.preventDefault();
@@ -2585,9 +2724,11 @@ export default function HomePage() {
     await refreshAll(codes);
   };
 
-  const saveSettings = (e) => {
+  const saveSettings = (e, secondsOverride) => {
     e?.preventDefault?.();
-    const ms = Math.max(30, Number(tempSeconds)) * 1000;
+    const seconds = secondsOverride ?? tempSeconds;
+    const ms = Math.max(30, Number(seconds)) * 1000;
+    setTempSeconds(Math.round(ms / 1000));
     setRefreshMs(ms);
     storageHelper.setItem('refreshMs', String(ms));
     const w = Math.min(2000, Math.max(600, Number(containerWidth) || 1200));
@@ -3349,13 +3490,13 @@ export default function HomePage() {
       isScanImporting;
 
     if (isAnyModalOpen) {
-      document.body.style.overflow = 'hidden';
+      containerRef.current.style.overflow = 'hidden';
     } else {
-      document.body.style.overflow = '';
+      containerRef.current.style.overflow = '';
     }
 
     return () => {
-      document.body.style.overflow = '';
+      containerRef.current.style.overflow = '';
     };
   }, [
     settingsOpen,
@@ -3711,6 +3852,26 @@ export default function HomePage() {
                       <div className="user-menu-divider" />
                       <button
                         className="user-menu-item"
+                        disabled={isSyncing}
+                        onClick={async () => {
+                          setUserMenuOpen(false);
+                          if (user?.id) await syncUserConfig(user.id);
+                        }}
+                        title="手动同步配置到云端"
+                      >
+                        {isSyncing ? (
+                          <span className="loading-spinner" style={{ width: 16, height: 16, border: '2px solid var(--muted)', borderTopColor: 'var(--primary)', borderRadius: '50%', animation: 'spin 1s linear infinite', flexShrink: 0 }} />
+                        ) : (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                            <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" stroke="var(--primary)" />
+                            <path d="M12 12v9" stroke="var(--accent)" />
+                            <path d="m16 16-4-4-4 4" stroke="var(--accent)" />
+                          </svg>
+                        )}
+                        <span>{isSyncing ? '同步中...' : '同步'}</span>
+                      </button>
+                      <button
+                        className="user-menu-item"
                         onClick={() => {
                           setUserMenuOpen(false);
                           setSettingsOpen(true);
@@ -3757,10 +3918,15 @@ export default function HomePage() {
           </div>
         </div>
       </div>
-
+      <MarketIndexAccordion
+        navbarHeight={navbarHeight}
+        onHeightChange={setMarketIndexAccordionHeight}
+        isMobile={isMobile}
+        onCustomSettingsChange={triggerCustomSettingsSync}
+      />
       <div className="grid">
         <div className="col-12">
-          <div ref={filterBarRef} className="filter-bar" style={{ ...(isMobile ? {} : { top: navbarHeight }), marginTop: navbarHeight, marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+          <div ref={filterBarRef} className="filter-bar" style={{ top: navbarHeight + marketIndexAccordionHeight, marginTop: 0, marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
             <div className="tabs-container">
               <div
                 className="tabs-scroll-area"
@@ -3860,17 +4026,29 @@ export default function HomePage() {
               <div className="divider" style={{ width: '1px', height: '20px', background: 'var(--border)' }} />
 
               <div className="sort-items" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span className="muted" style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <SortIcon width="14" height="14" />
-                  排序
-                </span>
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => setSortSettingOpen(true)}
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    padding: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    fontSize: '12px',
+                    color: 'var(--muted-foreground)',
+                    cursor: 'pointer',
+                    width: '50px',
+                  }}
+                  title="排序个性化设置"
+                >
+                  <span className="muted">排序</span>
+                  <SettingsIcon width="14" height="14" />
+                </button>
                 <div className="chips">
-                  {[
-                    { id: 'default', label: '默认' },
-                    { id: 'yield', label: '涨跌幅' },
-                    { id: 'holding', label: '持有收益' },
-                    { id: 'name', label: '名称' },
-                  ].map((s) => (
+                  {sortRules.filter((s) => s.enabled).map((s) => (
                     <button
                       key={s.id}
                       className={`chip ${sortBy === s.id ? 'active' : ''}`}
@@ -3886,7 +4064,7 @@ export default function HomePage() {
                       }}
                       style={{ height: '28px', fontSize: '12px', padding: '0 10px', display: 'flex', alignItems: 'center', gap: 4 }}
                     >
-                      <span>{s.label}</span>
+                      <span>{s.alias || s.label}</span>
                       {s.id !== 'default' && sortBy === s.id && (
                         <span
                           style={{
@@ -4058,7 +4236,7 @@ export default function HomePage() {
                         currentTab={currentTab}
                         favorites={favorites}
                         sortBy={sortBy}
-                        stickyTop={navbarHeight + filterBarHeight - 14}
+                        stickyTop={navbarHeight + filterBarHeight + marketIndexAccordionHeight}
                         blockDrawerClose={!!fundDeleteConfirm}
                         closeDrawerRef={fundDetailDrawerCloseRef}
                         onReorder={handleReorder}
@@ -4118,9 +4296,11 @@ export default function HomePage() {
                               setPercentModes((prev) => ({ ...prev, [code]: !prev[code] })),
                             onToggleCollapse: toggleCollapse,
                             onToggleTrendCollapse: toggleTrendCollapse,
+                            masked: maskAmounts,
                             layoutMode: 'drawer',
                           };
                         }}
+                        masked={maskAmounts}
                       />
                     )}
                     <AnimatePresence mode="popLayout">
@@ -4195,6 +4375,7 @@ export default function HomePage() {
           <ConfirmModal
             title="确认登出"
             message="确定要退出当前账号吗？"
+            icon={<LogoutIcon width="20" height="20" className="shrink-0 text-[var(--danger)]" />}
             confirmText="确认登出"
             onConfirm={() => {
               setLogoutConfirmOpen(false);
@@ -4214,6 +4395,10 @@ export default function HomePage() {
             <button
               className="link-button"
               onClick={() => {
+                if (!user?.id) {
+                  sonnerToast.error('请先登录后再提交反馈');
+                  return;
+                }
                 setFeedbackNonce((n) => n + 1);
                 setFeedbackOpen(true);
               }}
@@ -4281,6 +4466,7 @@ export default function HomePage() {
           <AddFundToGroupModal
             allFunds={funds}
             currentGroupCodes={groups.find(g => g.id === currentTab)?.codes || []}
+            holdings={holdings}
             onClose={() => setAddFundToGroupOpen(false)}
             onAdd={handleAddFundsToGroup}
           />
@@ -4551,6 +4737,16 @@ export default function HomePage() {
           handleVerifyEmailOtp={handleVerifyEmailOtp}
         />
       )}
+
+      {/* 排序个性化设置弹框 */}
+      <SortSettingModal
+        open={sortSettingOpen}
+        onClose={() => setSortSettingOpen(false)}
+        isMobile={isMobile}
+        rules={sortRules}
+        onChangeRules={setSortRules}
+        onResetRules={() => setSortRules(DEFAULT_SORT_RULES)}
+      />
 
       {/* 全局轻提示 Toast */}
       <AnimatePresence>

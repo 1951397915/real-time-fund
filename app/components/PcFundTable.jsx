@@ -34,7 +34,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { CloseIcon, DragIcon, ExitIcon, SettingsIcon, StarIcon, TrashIcon } from './Icons';
+import { CloseIcon, DragIcon, ExitIcon, SettingsIcon, StarIcon, TrashIcon, ResetIcon } from './Icons';
 
 const NON_FROZEN_COLUMN_IDS = [
   'yesterdayChangePercent',
@@ -131,6 +131,7 @@ function SortableRow({ row, children, isTableDragging, disabled }) {
  * @param {React.MutableRefObject<(() => void) | null>} [props.closeDialogRef] - 注入关闭弹框的方法，用于确认删除时关闭
  * @param {boolean} [props.blockDialogClose] - 为 true 时阻止点击遮罩关闭弹框（如删除确认弹框打开时）
  * @param {number} [props.stickyTop] - 表头固定时的 top 偏移（与 MobileFundTable 一致，用于适配导航栏、筛选栏等）
+ * @param {boolean} [props.masked] - 是否隐藏持仓相关金额
  */
 export default function PcFundTable({
   data = [],
@@ -149,6 +150,7 @@ export default function PcFundTable({
   closeDialogRef,
   blockDialogClose = false,
   stickyTop = 0,
+  masked = false,
 }) {
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -412,7 +414,12 @@ export default function PcFundTable({
         return;
       }
 
-      setShowPortalHeader(rect.top <= nextStickyTop);
+      const headerEl = tableEl?.querySelector('.table-header-row');
+      const headerHeight = headerEl?.getBoundingClientRect?.().height ?? 0;
+      const hasPassedHeader = (rect.top + headerHeight) <= nextStickyTop;
+      const hasTableInView = rect.bottom > nextStickyTop;
+
+      setShowPortalHeader(hasPassedHeader && hasTableInView);
 
       setPortalHorizontal((prev) => {
         const next = {
@@ -561,11 +568,21 @@ export default function PcFundTable({
         header: '最新净值',
         size: 100,
         minSize: 80,
-        cell: (info) => (
-          <FitText style={{ fontWeight: 700 }} maxFontSize={14} minFontSize={10}>
-            {info.getValue() ?? '—'}
-          </FitText>
-        ),
+        cell: (info) => {
+          const original = info.row.original || {};
+          const rawDate = original.latestNavDate ?? '-';
+          const date = typeof rawDate === 'string' && rawDate.length > 5 ? rawDate.slice(5) : rawDate;
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0 }}>
+              <FitText style={{ fontWeight: 700 }} maxFontSize={14} minFontSize={10} as="div">
+                {info.getValue() ?? '—'}
+              </FitText>
+              <span className="muted" style={{ fontSize: '11px' }}>
+                {date}
+              </span>
+            </div>
+          );
+        },
         meta: {
           align: 'right',
           cellClassName: 'value-cell',
@@ -576,11 +593,25 @@ export default function PcFundTable({
         header: '估算净值',
         size: 100,
         minSize: 80,
-        cell: (info) => (
-          <FitText style={{ fontWeight: 700 }} maxFontSize={14} minFontSize={10}>
-            {info.getValue() ?? '—'}
-          </FitText>
-        ),
+        cell: (info) => {
+          const original = info.row.original || {};
+          const rawDate = original.estimateNavDate ?? '-';
+          const date = typeof rawDate === 'string' && rawDate.length > 5 ? rawDate.slice(5) : rawDate;
+          const estimateNav = info.getValue();
+          const hasEstimateNav = estimateNav != null && estimateNav !== '—';
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0 }}>
+              <FitText style={{ fontWeight: 700 }} maxFontSize={14} minFontSize={10} as="div">
+                {estimateNav ?? '—'}
+              </FitText>
+              {hasEstimateNav && date && date !== '-' ? (
+                <span className="muted" style={{ fontSize: '11px' }}>
+                  {date}
+                </span>
+              ) : null}
+            </div>
+          );
+        },
         meta: {
           align: 'right',
           cellClassName: 'value-cell',
@@ -594,7 +625,8 @@ export default function PcFundTable({
         cell: (info) => {
           const original = info.row.original || {};
           const value = original.yesterdayChangeValue;
-          const date = original.yesterdayDate ?? '-';
+          const rawDate = original.yesterdayDate ?? '-';
+          const date = typeof rawDate === 'string' && rawDate.length > 5 ? rawDate.slice(5) : rawDate;
           const cls = value > 0 ? 'up' : value < 0 ? 'down' : '';
           return (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0 }}>
@@ -621,16 +653,21 @@ export default function PcFundTable({
           const original = info.row.original || {};
           const value = original.estimateChangeValue;
           const isMuted = original.estimateChangeMuted;
-          const time = original.estimateTime ?? '-';
+          const rawTime = original.estimateTime ?? '-';
+          const time = typeof rawTime === 'string' && rawTime.length > 5 ? rawTime.slice(5) : rawTime;
           const cls = isMuted ? 'muted' : value > 0 ? 'up' : value < 0 ? 'down' : '';
+          const text = info.getValue();
+          const hasText = text != null && text !== '—';
           return (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0 }}>
               <FitText className={cls} style={{ fontWeight: 700 }} maxFontSize={14} minFontSize={10} as="div">
-                {info.getValue() ?? '—'}
+                {text ?? '—'}
               </FitText>
-              <span className="muted" style={{ fontSize: '11px' }}>
-                {time}
-              </span>
+              {hasText && time && time !== '-' ? (
+                <span className="muted" style={{ fontSize: '11px' }}>
+                  {time}
+                </span>
+              ) : null}
             </div>
           );
         },
@@ -655,9 +692,9 @@ export default function PcFundTable({
           return (
             <div style={{ width: '100%' }}>
               <FitText className={cls} style={{ fontWeight: 700, display: 'block' }} maxFontSize={14} minFontSize={10}>
-                {amountStr}
+                {masked && hasProfit ? <span className="mask-text">******</span> : amountStr}
               </FitText>
-              {percentStr ? (
+              {hasProfit && percentStr && !masked ? (
                 <span className={`${cls} estimate-profit-percent`} style={{ display: 'block', fontSize: '0.75em', opacity: 0.9, fontWeight: 500 }}>
                   <FitText maxFontSize={11} minFontSize={9}>
                     {percentStr}
@@ -713,7 +750,7 @@ export default function PcFundTable({
             >
               <div style={{ flex: '1 1 0', minWidth: 0 }}>
                 <FitText style={{ fontWeight: 700 }} maxFontSize={14} minFontSize={10}>
-                  {info.getValue() ?? '—'}
+                  {masked ? <span className="mask-text">******</span> : (info.getValue() ?? '—')}
                 </FitText>
               </div>
               <button
@@ -751,9 +788,9 @@ export default function PcFundTable({
           return (
             <div style={{ width: '100%' }}>
               <FitText className={cls} style={{ fontWeight: 700, display: 'block' }} maxFontSize={14} minFontSize={10}>
-                {amountStr}
+                {masked && hasProfit ? <span className="mask-text">******</span> : amountStr}
               </FitText>
-              {percentStr && !isUpdated ? (
+              {percentStr && !isUpdated && !masked ? (
                 <span className={`${cls} today-profit-percent`} style={{ display: 'block', fontSize: '0.75em', opacity: 0.9, fontWeight: 500 }}>
                   <FitText maxFontSize={11} minFontSize={9}>
                     {percentStr}
@@ -783,9 +820,9 @@ export default function PcFundTable({
           return (
             <div style={{ width: '100%' }}>
               <FitText className={cls} style={{ fontWeight: 700, display: 'block' }} maxFontSize={14} minFontSize={10}>
-                {amountStr}
+                {masked && hasTotal ? <span className="mask-text">******</span> : amountStr}
               </FitText>
-              {percentStr ? (
+              {percentStr && !masked ? (
                 <span className={`${cls} holding-profit-percent`} style={{ display: 'block', fontSize: '0.75em', opacity: 0.9, fontWeight: 500 }}>
                   <FitText maxFontSize={11} minFontSize={9}>
                     {percentStr}
@@ -858,7 +895,7 @@ export default function PcFundTable({
         },
       },
     ],
-    [currentTab, favorites, refreshing, sortBy, showFullFundName, getFundCardProps],
+    [currentTab, favorites, refreshing, sortBy, showFullFundName, getFundCardProps, masked],
   );
 
   const table = useReactTable({
@@ -917,7 +954,7 @@ export default function PcFundTable({
       left: isLeft ? `${column.getStart('left')}px` : undefined,
       right: isRight ? `${column.getAfter('right')}px` : undefined,
       zIndex: isHeader ? 11 : 10,
-      backgroundColor: isHeader ? 'var(--table-pinned-header-bg)' : 'var(--row-bg)',
+      backgroundColor: isHeader ? 'var(--table-pinned-header-bg)' : 'var(--row-bg, var(--bg))',
       boxShadow: 'none',
       textAlign: isNameColumn ? 'left' : 'center',
       justifyContent: isNameColumn ? 'flex-start' : 'center',
@@ -968,10 +1005,43 @@ export default function PcFundTable({
       <style>{`
         .table-row-scroll {
           --row-bg: var(--bg);
-          background-color: var(--row-bg);
+          background-color: var(--row-bg) !important;
+        }
+        .table-row-scroll:nth-child(even),
+        .table-row-scroll.row-even {
+          background-color: var(--table-row-alt-bg) !important;
         }
         .table-row-scroll:hover {
           --row-bg: var(--table-row-hover-bg);
+          background-color: var(--row-bg) !important;
+        }
+
+        /* Pinned cells inherit from parent row */
+        .table-row-scroll .pinned-cell {
+          background-color: var(--row-bg) !important;
+        }
+        .table-row-scroll:nth-child(even) .pinned-cell,
+        .table-row-scroll.row-even .pinned-cell {
+          background-color: var(--table-row-alt-bg) !important;
+        }
+        .table-row-scroll:hover .pinned-cell {
+          background-color: var(--table-row-hover-bg) !important;
+        }
+        .table-row-scroll:nth-child(even) {
+          background-color: var(--table-row-alt-bg);
+        }
+        .table-row-scroll:hover {
+          --row-bg: var(--table-row-hover-bg);
+        }
+
+        /* Pinned cells in even rows */
+        .row-even .pinned-cell {
+          background-color: var(--table-row-alt-bg) !important;
+        }
+
+        /* Pinned cells on hover */
+        .table-row-scroll:hover .pinned-cell {
+          background-color: var(--table-row-hover-bg) !important;
         }
 
         /* 覆盖 grid 布局为 flex 以支持动态列宽 */
@@ -1055,10 +1125,10 @@ export default function PcFundTable({
           strategy={verticalListSortingStrategy}
         >
           <AnimatePresence mode="popLayout">
-            {table.getRowModel().rows.map((row) => (
+            {table.getRowModel().rows.map((row, index) => (
               <SortableRow key={row.original.code || row.id} row={row} isTableDragging={!!activeId} disabled={sortBy !== 'default'}>
                 <div
-                  className="table-row table-row-scroll"
+                  className={`table-row table-row-scroll ${index % 2 === 1 ? 'row-even' : ''}`}
                 >
                   {row.getVisibleCells().map((cell) => {
                     const columnId = cell.column.id || cell.column.columnDef?.accessorKey;
@@ -1081,10 +1151,11 @@ export default function PcFundTable({
                     const cellClassName =
                       (cell.column.columnDef.meta && cell.column.columnDef.meta.cellClassName) || '';
                     const style = getCommonPinningStyles(cell.column, false);
+                    const isPinned = cell.column.getIsPinned();
                     return (
                       <div
                         key={cell.id}
-                        className={`table-cell ${align} ${cellClassName}`}
+                        className={`table-cell ${align} ${cellClassName} ${isPinned ? 'pinned-cell' : ''}`}
                         style={style}
                       >
                         {flexRender(
@@ -1112,6 +1183,8 @@ export default function PcFundTable({
         <ConfirmModal
           title="重置列宽"
           message="是否重置表格列宽为默认值？"
+          icon={<ResetIcon width="20" height="20" className="shrink-0 text-[var(--primary)]" />}
+          confirmVariant="primary"
           onConfirm={handleResetSizing}
           onCancel={() => setResetConfirmOpen(false)}
           confirmText="重置"
@@ -1140,22 +1213,12 @@ export default function PcFundTable({
       >
         <DialogContent
           className="sm:max-w-2xl max-h-[88vh] flex flex-col p-0 overflow-hidden"
-          showCloseButton={false}
           onPointerDownOutside={blockDialogClose ? (e) => e.preventDefault() : undefined}
         >
           <DialogHeader className="flex-shrink-0 flex flex-row items-center justify-between gap-2 space-y-0 px-6 pb-4 pt-6 text-left border-b border-[var(--border)]">
             <DialogTitle className="text-base font-semibold text-[var(--text)]">
               基金详情
             </DialogTitle>
-            <button
-              type="button"
-              className="icon-button rounded-lg"
-              aria-label="关闭"
-              onClick={() => setCardDialogRow(null)}
-              style={{ padding: 4, borderColor: 'transparent' }}
-            >
-              <CloseIcon width="20" height="20" />
-            </button>
           </DialogHeader>
           <div
             className="flex-1 min-h-0 overflow-y-auto px-6 py-4"

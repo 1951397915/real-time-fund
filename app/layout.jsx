@@ -1,5 +1,8 @@
+import { Toaster } from '@/components/ui/sonner';
 import './globals.css';
 import AnalyticsGate from './components/AnalyticsGate';
+import PwaRegister from './components/PwaRegister';
+import ThemeColorSync from './components/ThemeColorSync';
 import packageJson from '../package.json';
 
 export const metadata = {

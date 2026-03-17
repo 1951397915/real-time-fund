@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const ANNOUNCEMENT_KEY = 'hasClosedAnnouncement_v13';
+const ANNOUNCEMENT_KEY = 'hasClosedAnnouncement_v17';
 
 export default function Announcement() {
   const [isVisible, setIsVisible] = useState(false);
@@ -75,18 +75,22 @@ export default function Announcement() {
               <span>公告</span>
             </div>
             <div style={{ color: 'var(--text)', lineHeight: '1.6', fontSize: '15px', overflowY: 'auto', minHeight: 0, flex: 1, paddingRight: '4px' }}>
-              <p>v0.2.2 版本更新内容如下：</p>
-              <p>1. 新增 ios pwa 应用支持。</p>
-              <p>2. 引入 shadcn ui 组件库，逐步调整项目样式。</p>
-              <p>3. 列表模式表头固定。</p>
-              <p>4. 列表模式点击名称，展示基金详情弹框。</p>
-              <p>5. 移动端列表模式，在默认排序下支持表格行排序。</p>
-              <p>注：强烈建议苹果用户通过 Safari 浏览器→分享→添加应用到主屏幕，实现保存网页成APP效果。（安卓同理）</p>
+              <p>v0.2.6 更新内容：</p>
+              <p>1. 新增大盘指数并支持个性化。</p>
+              <p>2. 新增持仓金额排序以及排序个性化设置。</p>
+              <p>3. 新增历史净值。</p>
+              <p>4. 表格视图斑马纹。</p>
+              <br/>
+              <p>下一版本更新内容:</p>
+              <p>1. 关联板块。</p>
+              <p>2. 收益曲线。</p>
+              <p>3. 估值差异列。</p>
+              <p>如有建议和问题，欢迎进用户支持群反馈。</p>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
-              <button 
-                className="button" 
+              <button
+                className="button"
                 onClick={handleClose}
                 style={{ width: '100%', justifyContent: 'center', display: 'flex', alignItems: 'center' }}
               >
