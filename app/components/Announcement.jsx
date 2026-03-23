@@ -80,12 +80,12 @@ export default function Announcement() {
               <p>2. 修复排序存储别名问题。</p>
               <p>3. PC端斑马纹 hover 样式问题。</p>
               <p>4. 修复大盘指数刷新及用户数据同步问题。</p>
-              <br/>
+              <br />
               <p>下一版本更新内容:</p>
               <p>1. 关联板块。</p>
               <p>2. 收益曲线。</p>
               <p>3. 估值差异列。</p>
-              <p>如有建议和问题，欢迎进用户支持群反馈。</p>
+              {/* <p>如有建议和问题，欢迎进用户支持群反馈。</p> */}
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
