@@ -81,9 +81,9 @@ export default function Announcement() {
               <p>3. 全局设置新增显示/隐藏大盘指数。</p>
               <p>4. 新增持有天数。</p>
               <p>5. 登录方式支持 Github。</p>
-              <br/>
+              <br />
               关联板块实时估值还在测试，会在近期上线。
-              <p>如有建议和问题，欢迎进用户支持群反馈。</p>
+              {/* <p>如有建议和问题，欢迎进用户支持群反馈。</p> */}
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
